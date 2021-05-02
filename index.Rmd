@@ -558,6 +558,7 @@ sd_by_col <- apply(t0_cleaned[, -1], 2, sd)
 
 # Create the z-scores via the 'scale' function
 z_scores <- scale(mean_by_cluster, center = mean_by_col, scale = sd_by_col)
+z_scores %>% as_tibble() %>%  write_csv("op/zscores.csv")
 ```
 
 A named cluster has been assigned to each of the Small Areas, based on the K-Means clustering algorithm on the variables prepared during Step 1. These have then in turn been transformed to explain each cluster in terms of the original variables, rather than the principal components.
@@ -592,6 +593,8 @@ SAclusters %>%
   add_column(guid = dublin_saps_2016$GUID,
              total_pop = dublin_saps_2016$T1_1AGETT) %>% 
   left_join(z_table) -> sa_by_cluster
+
+sa_by_cluster %>% write_csv("op/sa_by_cluster.csv")
 ```
 
 
