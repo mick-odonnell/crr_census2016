@@ -1,5 +1,6 @@
 ---
 title: "Community Fire Safety Demographic Analysis"
+auhtor: "Mick O Donnell"
 output:
   html_document:
     df_print: paged
