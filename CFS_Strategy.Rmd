@@ -1,0 +1,596 @@
+---
+title: "Community Fire Safety Demographic Analysis"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+# DFB Community Fire Safety Demographic Analysis
+
+## Background
+This document outlines the analysis of Ireland's 2016 Census of Population for the purpose of identifying targets for Community Fire Safety measures. It has long been thought that poverty is a key indicator of fire risk, but this analysis aims to go further and attempt to discover other factors which impact fire risk. The main source of information is the Census 2016 information at Small Area level, but other datasets will be used when deemed helpful.
+
+## Methodology
+Several methodologies will be utilised during this analysis, as listed below;
+
+* Clustering via K-means and PAM
+* Linear regression of Census Variables against Domestic Fire Incidence
+* Determination of any spatial correlation of Domestic Fires and other fire incidents.
+
+```{r setup, warning = FALSE, cache = FALSE, message = FALSE, error = FALSE, tidy = TRUE}
+knitr::opts_chunk$set(warning = FALSE, cache = FALSE, message = FALSE, error = FALSE, tidy = TRUE)
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+```
+
+```{r load-data}
+dublin_saps_2016 <- read_csv("data/dublin2016_SAPS.csv")
+```
+
+## Step 1 - Variable preparation
+The Census Data is divided into subject areas called themes; for example Theme 1 deals with number of people at a specific age category, while Theme 4 deals with Family make-up. These themes are further divided into sub-tables, counting specific measures within the theme. Since each Small Area has slightly differing populations, in order to compare across Small Areas, it is necessary to convert the raw information into proportions. During this exercise, it would be useful to select which themes might be predictive of fire risk; for this we might take guidance from some recent studies in this area, such as the [Profile of fire fatalities in Ireland using coronial data](https://www.sciencedirect.com/science/article/pii/S0379711218305708). In this, risk factors such as;  
+* Being older than 65 years of age
+* Being Male
+* Dwelling in a rural area
+* Alcohol and Drug consumption
+* Living Alone
+* Smoking
+
+had high prevalence as factors in people who died from fire during the years 2014 to 2016.
+
+The following themes and sub-tables were used:  
+Themes	Tables Within Themes
+	
+Theme 1: Sex, Age and Marital Status 	
+	Population aged 0 - 19 by sex and year of age, population over 65 and the remainder as three groups.
+Theme 2: Migration, Ethnicity, Religion and Foreign Languages	
+	Usually resident population by ethnic or cultural background 
+	Usually resident population aged 1 year and over by usual residence 1 year before Census Day
+	Speakers of foreign languages by ability to speak English 
+Theme 6: Housing 	
+	Private households by type of accommodation 
+	Permanent private households by year built 
+	Permanent private households by type of occupancy 
+	Permanent private households by number of rooms 
+Theme 8: Principal Status 	
+	Population aged 15 years and over by principal economic status 
+Theme 10: Education 	
+	Population aged 15 years and over by sex and highest level of education completed 
+Theme 12: Disability, Carers and General Health 	
+	Persons with disability by sex
+	Population by general health and sex
+
+
+### Step 1.1 Age Related Variables.
+We will stratify the age groups into those less than 18, males greater than 65, females greater than 65, and the remainder.
+
+```{r age-prep}
+dublin_saps_2016 %>% 
+  mutate(prop_lte_18 = (
+           T1_1AGE0T +
+           T1_1AGE1T +
+           T1_1AGE2T +
+           T1_1AGE3T +
+           T1_1AGE4T +
+           T1_1AGE5T +
+           T1_1AGE6T +
+           T1_1AGE7T +
+           T1_1AGE8T +
+           T1_1AGE9T +
+           T1_1AGE10T +
+           T1_1AGE11T +
+           T1_1AGE12T +
+           T1_1AGE13T +
+           T1_1AGE14T +
+           T1_1AGE15T +
+           T1_1AGE16T +
+           T1_1AGE17T +
+           T1_1AGE18T) / T1_1AGETT,
+          prop_18_to_65 = (
+           T1_1AGE19T +
+           T1_1AGE20_24T +
+           T1_1AGE25_29T +
+           T1_1AGE30_34T +
+           T1_1AGE35_39T +
+           T1_1AGE40_44T +
+           T1_1AGE45_49T +
+           T1_1AGE50_54T +
+           T1_1AGE55_59T +
+           T1_1AGE60_64T)/ T1_1AGETT,
+          prop_gt65_M = (
+           T1_1AGE65_69M +
+           T1_1AGE70_74M +
+           T1_1AGE75_79M +
+           T1_1AGE80_84M +
+           T1_1AGEGE_85M) / T1_1AGETT,
+          prop_gt65_F = (
+           T1_1AGE65_69F +
+           T1_1AGE70_74F +
+           T1_1AGE75_79F +
+           T1_1AGE80_84F +
+           T1_1AGEGE_85F) / T1_1AGETT
+         ) %>% 
+  select(1, starts_with('prop'))-> t0_age
+```
+
+### Step 1.2 Country of Birth, Ethnic or Cultural Background, English Language Competency
+There are many ways to segment on a "background" theme, and this can be a difficult predictor to use without singling out specific groups. To this end, the intention is to look at all factors possible and to use them naively to try and determine if any patterns are discernible.
+
+#### Nationality
+
+T2_1IEN	Ireland - Nationality
+T2_1UKN	UK - Nationality
+T2_1PLN	Poland - Nationality
+T2_1LTN	Lithuania - Nationality
+T2_1EUN	Other EU28 - Nationality
+T2_1RWN	Rest of world - Nationality
+
+```{r country-of-origin}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_irish_nationality = T2_1IEN / T2_1TN,
+  prop_uk_nationality = T2_1UKN / T2_1TN,
+  prop_polish_nationality = T2_1PLN / T2_1TN,
+  prop_latvian_nationality = T2_1LTN / T2_1TN,
+  prop_other_eu_nationality = T2_1EUN / T2_1TN,
+  prop_row_nationality = T2_1RWN / T2_1TN
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_nationality
+```
+
+#### Ethnicity
+
+T2_2WI	White Irish
+T2_2WIT	White Irish Traveller
+T2_2OW	Other White
+T2_2BBI	Black or Black Irish
+T2_2AAI	Asian or Asian Irish
+T2_2OTH	Other
+
+```{r ethnicity-culture}
+
+dublin_saps_2016 %>% 
+  mutate(
+  prop_white_irish = T2_2WI / T2_2T,
+  prop_white_irish_traveller = T2_2WIT / T2_2T,
+  prop_other_white = T2_2OW / T2_2T,
+  prop_black_or_black_irish = T2_2BBI / T2_2T,
+  prop_asian_asian_irish = T2_2AAI / T2_2T,
+  prop_other_ethnicity = T2_2OTH / T2_2T
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_ethnicity_culture
+```
+
+#### Migration
+
+T2_3SA	Same address
+T2_3EC	Elsewhere in county
+T2_3EI	Elsewhere in Ireland
+T2_3OI	Outside Ireland
+
+```{r migration}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_same_address = T2_3SA / T2_3T,
+  prop_elsewhere_county = T2_3EC / T2_3T,
+  prop_elsewhere_ireland = T2_3EI / T2_3T,
+  prop_outside_ireland = T2_3OI / T2_3T
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_migration
+```
+
+#### English Language Competency
+
+T2_6VW	Very well
+T2_6W	Well
+T2_6NW	Not well
+T2_6NAA	Not at all
+T2_6NS	Not stated
+T2_6T	Total
+
+```{r english-language-competency}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_english_very_well = T2_6VW / T2_6T,
+  prop_english_well = T2_6W / T2_6T,
+  prop_english_not_well = T2_6NW / T2_6T,
+  prop_english_not_at_all = T2_6NAA / T2_6T
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_english_language
+```
+
+### Step 1.3 Housing
+This theme seems to have a lot of value as it holds the best information from the Census for the built environment.
+
+These are the available sub-tables:  
+* Private households by type of accommodation 
+* Permanent private households by year built 
+* Permanent private households by type of occupancy 
+* Permanent private households by number of rooms 
+* Permanent private households by central heating 
+* Permanent private households by water supply 
+* Permanent private households by sewerage facility 
+* Occupancy status of permanent dwellings on Census night
+
+#### Type of Accommodation
+
+T6_1_HB_H	House/Bungalow (No. of households)
+T6_1_FA_H	Flat/Apartment (No. of households)
+T6_1_BS_H	Bed-Sit (No. of households)
+T6_1_CM_H	Caravan/Mobile home (No. of households)
+T6_1_NS_H	Not stated (No. of households)
+T6_1_TH	Total (No. of households)
+
+```{r accommodation-type}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_house_bungalow = T6_1_HB_H / T6_1_TH,
+  prop_flat_apartment = T6_1_FA_H / T6_1_TH,
+  prop_bedsit = T6_1_BS_H / T6_1_TH,
+  prop_caravan_mobile = T6_1_CM_H / T6_1_TH
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_accommodation_type
+```
+
+#### Household by Year Built
+
+T6_2_PRE19H	Pre 1919 (No. of households)
+T6_2_19_45H	1919 - 1945 (No. of households)
+T6_2_46_60H	1946 - 1960 (No. of households)
+T6_2_61_70H	1961 - 1970 (No. of households)
+T6_2_71_80H	1971 - 1980 (No. of households)
+T6_2_81_90H	1981 - 1990 (No. of households)
+T6_2_91_00H	1991 - 2000 (No. of households)
+T6_2_01_10H	2001 - 2010 (No. of households)
+T6_2_11LH	2011 or Later (No. of households)
+T6_2_NSH	Not stated (No. of households)
+T6_2_TH	Total (No. of households)
+
+```{r household-year-built}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_pre1919 = T6_2_PRE19H / T6_2_TH,
+  prop_1919_1945 = T6_2_19_45H / T6_2_TH,
+  prop_1946_1960 = T6_2_46_60H / T6_2_TH,
+  prop_1961_1970 = T6_2_61_70H / T6_2_TH,
+  prop_1971_1980 = T6_2_71_80H / T6_2_TH,
+  prop_1981_1990 = T6_2_81_90H / T6_2_TH,
+  prop_1991_2000 = T6_2_91_00H / T6_2_TH,
+  prop_2001_2010 = T6_2_01_10H / T6_2_TH,
+  prop_2011_plus = T6_2_11LH / T6_2_TH
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_housing_era
+```
+
+#### Occupancy Type
+
+T6_3_OMLH	Owned with mortgage or loan (No. of households)
+T6_3_OOH	Owned outright (No. of households)
+T6_3_RPLH	Rented from private landlord (No. of households) 
+T6_3_RLAH	Rented from Local Authority (No. of households)
+T6_3_RVCHBH	Rented from voluntary/co-operative housing body (No. of households)
+T6_3_OFRH	Occupied free of rent (No. of households)
+T6_3_NSH	Not stated (No. of households)
+T6_3_TH	Total (No. of households)
+
+```{r occupancy-type}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_owned_mortgage = T6_3_OMLH / T6_3_TH,
+  prop_owned_fully = T6_3_OOH / T6_3_TH,
+  prop_rented_private = T6_3_RPLH / T6_3_TH,
+  prop_rented_la = T6_3_RLAH / T6_3_TH,
+  prop_rented_ahb = T6_3_RVCHBH / T6_3_TH,
+  prop_rent_free = T6_3_OFRH / T6_3_TH
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_occupancy_type
+```
+
+#### Dwelling by Room Count
+
+T6_4_1RH	1 room (No. of households)
+T6_4_2RH	2 rooms (No. of households)
+T6_4_3RH	3 rooms (No. of households)
+T6_4_4RH	4 rooms (No. of households)
+T6_4_5RH	5 rooms (No. of households)
+T6_4_6RH	6 rooms (No. of households)
+T6_4_7RH	7 rooms (No. of households)
+T6_4_GE8RH	8 or more rooms (No. of households)
+T6_4_TH	Total (No. of households)
+
+
+```{r dwelling-room-ct}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_one_room = T6_4_1RH / T6_4_TH,
+  prop_two_rooms = T6_4_2RH / T6_4_TH,
+  prop_three_rooms = T6_4_3RH / T6_4_TH,
+  prop_four_rooms = T6_4_4RH / T6_4_TH,
+  prop_five_rooms = T6_4_5RH / T6_4_TH,
+  prop_six_rooms = T6_4_6RH / T6_4_TH,
+  prop_seven_rooms = T6_4_7RH / T6_4_TH,
+  prop_ge_eight_rooms = T6_4_GE8RH / T6_4_TH,
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_room_count
+```
+
+### Step 1.4 Occupation
+
+This is a broad description of the principal occupation, not accounting for the type of work done.
+
+T8_1_WT	At work - Total
+T8_1_LFFJT	Looking for first regular job - Total
+T8_1_ULGUPJT	Unemployed having lost or given up previous job - Total
+T8_1_ST	Student - Total
+T8_1_LAHFT	Looking after home/family - Total
+T8_1_RT	Retired - Total
+T8_1_UTWSDT	Unable to work due to permanent sickness or disability - Total
+T8_1_OTHT	Other - Total
+T8_1_TT	Total
+
+
+```{r principle-occupation}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_at_work = T8_1_WT / T8_1_TT,
+  prop_seeking_first_job = T8_1_LFFJT / T8_1_TT,
+  prop_unemp = T8_1_ULGUPJT / T8_1_TT,
+  prop_student = T8_1_ST / T8_1_TT,
+  prop_family_care = T8_1_LAHFT / T8_1_TT,
+  prop_retired = T8_1_RT / T8_1_TT,
+  prop_disability_not_working = T8_1_UTWSDT / T8_1_TT
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_principle_occupation
+```
+
+### Step 1.5 Education
+
+A simple view of the highest level of education attained is used.
+
+T10_4_NFT	No formal education - Total
+T10_4_PT	Primary education - Total
+T10_4_LST	Lower secondary - Total
+T10_4_UST	Upper secondary - Total
+T10_4_TVT	Technical or vocational qualification - Total
+T10_4_ACCAT	Advanced certificate/Completed apprenticeship - Total
+T10_4_HCT	Higher certificate - Total
+T10_4_ODNDT	Ordinary bachelor degree or national diploma - Total
+T10_4_HDPQT	Honours bachelor degree, professional qualification or both - Total
+T10_4_PDT	Postgraduate diploma or degree - Total
+T10_4_DT	Doctorate(Ph.D) or higher - Total
+T10_4_NST	Not stated - Total
+T10_4_TT	Total
+
+```{r highest-education-level-attained}
+dublin_saps_2016 %>% 
+  mutate(
+  prop_no_formal_education = T10_4_NFT / T10_4_TT,
+  prop_primary = T10_4_PT / T10_4_TT,
+  prop_lower_2ary = T10_4_LST / T10_4_TT,
+  prop_upper_2ary = T10_4_UST / T10_4_TT,
+  prop_technical_voc_qual = (T10_4_TVT + T10_4_ACCAT)/ T10_4_TT,
+  prop_third_level = (T10_4_HCT + T10_4_ODNDT + T10_4_HDPQT + T10_4_PDT + T10_4_DT) / T10_4_TT
+  ) %>% 
+  select(1, starts_with("prop")) -> t0_education
+```
+
+### step 1.6 Disability and General Health
+
+#### Persons with disability by sex
+
+T12_1_M
+T12_1_F
+T12_1_T
+
+```{r disbaility-status}
+dublin_saps_2016 %>% 
+  mutate(prop_w_disability = (T12_1_M + T12_1_F) / T1_1AGETT) %>% 
+  select(1, starts_with("prop")) -> t0_disability_status
+```
+
+Population by general health and sex
+
+T12_3_VGT	Very good - Total
+T12_3_GT	Good - Total
+T12_3_FT	Fair - Total
+T12_3_BT	Bad - Total
+T12_3_VBT	Very bad - Total
+T12_3_NST	Not stated - Total
+T12_3_TT	Total
+
+```{r general-health}
+dublin_saps_2016 %>% 
+  mutate(prop_very_good_health = T12_3_VGT / T12_3_TT,
+         prop_good_health = T12_3_GT / T12_3_TT,
+         prop_fair_health = T12_3_FT / T12_3_TT,
+         prop_bad_health = T12_3_BT / T12_3_TT,
+         prop_very_bad_health = T12_3_VBT / T12_3_TT
+         ) %>% 
+  select(1, starts_with("prop")) -> t0_health_status
+```
+
+#### Step 1. Join Tables and Inspect
+
+```{r join-subtables}
+t0 <-
+  t0_age %>% 
+  left_join(t0_nationality) %>% 
+  left_join(t0_ethnicity_culture) %>% 
+  left_join(t0_migration) %>% 
+  left_join(t0_english_language) %>% 
+  left_join(t0_accommodation_type) %>% 
+  left_join(t0_housing_era) %>% 
+  left_join(t0_occupancy_type) %>% 
+  left_join(t0_room_count) %>% 
+  left_join(t0_principle_occupation) %>% 
+  left_join(t0_education) %>% 
+  left_join(t0_disability_status) %>% 
+  left_join(t0_health_status)
+```
+
+## Step 2 - Principal Component Analysis
+
+The purpose of PCA is to determine the amount of variance described by each particular predictor; it is common that a small number of variables will account for a large proportion of the variance (like the 90:10 rule, 90% of the variance is explained by 10% of the variables). If we set a threshold of variance explained, we can take a subset of the most relevant predictors and carry these forward into the clustering process.
+
+The _recipes_ package will be used to structure the process. 
+
+```{r pca-first-pass}
+library(tidymodels)
+
+# need to clean some Inf and Missing Values
+t0 %>% 
+  mutate_all(list(~na_if(., Inf))) -> t0_cleaned
+
+pca_rec <- recipe(~., data = t0_cleaned) %>%
+  update_role(GUID, new_role = "id") %>%
+  step_pca(all_predictors())
+
+pca_prep <- prep(pca_rec)
+
+pca_prep
+```
+
+The PCA is now performed, the next step is to visualize the results. We will look at the first five principal components and see if we can see any strong trends.
+
+```{r visualise-pca}
+tidied_pca <- tidy(pca_prep, 1)
+
+tidied_pca %>%
+  filter(component %in% paste0("PC", 1:5)) %>%
+  mutate(component = fct_inorder(component)) %>%
+  ggplot(aes(terms, value, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(component~., ncol = 1) +
+  labs(y = NULL) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = "Principal Components 1 through 5",
+       y = "Magnitude",
+       x = "Category")
+
+library(tidytext)
+
+tidied_pca %>%
+  filter(component %in% paste0("PC", 1:4)) %>%
+  group_by(component) %>%
+  top_n(8, abs(value)) %>%
+  ungroup() %>%
+  mutate(terms = reorder_within(terms, abs(value), component)) %>%
+  ggplot(aes(terms, abs(value), fill = value > 0)) +
+  geom_col() +
+  facet_wrap(component~., scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(
+    x = "Absolute value of contribution",
+    y = NULL, fill = "Positive?"
+  )
+
+```
+
+The workflow outlined in Brunsdon et al's [Ireland Census of Population 2011: A classification of Small Areas
+ERNIE - Echelons of Residential Neighbourhoods (IE)](https://rpubs.com/chrisbrunsdon/14998) will be utilised to develop clusters for Domestic Fire Risk in Dublin.
+
+```{r extract-prin-comps}
+PCA <- princomp(t0_cleaned[, -1], cor = T, scores = T)
+PCA$sdev^2/sum(PCA$sdev^2)
+
+cumsum(PCA$sdev^2/sum(PCA$sdev^2))
+
+# set number of principal components
+n.pc <- 20
+```
+
+Looking at the cumulative sums of the variance portion explained by each principal component, 80% of the variance is explained by the first 20 components. We will bring these forward into our clustering process.
+
+```{r clustering-step-1, eval=FALSE}
+
+
+set.seed(290162)  # Reproducible outcome
+then <- now()  # Time this - it takes a while
+
+smallest.clus <- wss <- rep(0, 100)
+
+for (i in 1:100) {
+    clus <- kmeans(PCA$scores[, 1:n.pc], i, iter.max = 100, nstart = 20)
+    wss[i] <- clus$tot.withinss
+    smallest.clus[i] <- min(clus$size)
+}
+
+# How long did the calculation take?
+elapsed <- now() - then
+
+# Some diagnostic plots are required to set downstream parameters
+plot(1:100, wss[1:100], type = "h", main = "Cluster Scree Plot", xlab = "Number of Clusters", 
+    ylab = "Within Cluster Sum of Squares")
+
+plot(1:100, smallest.clus[1:100], type = "h", main = "Smallest Cluster Plot", 
+    xlab = "Number of Clusters", ylab = "Smallest Cluster Size")
+```
+
+The "Smallest Cluster Size" plot indicates under the above conditions that after 9 clusters, the smallest cluster size becomes miniscule and would have no relevance. We will set the desired number of clusters at 9 and run the process again.
+
+```{r clustering-step-2}
+# set seed to get the same answer each time!
+set.seed(32767)
+
+# set n.clus to the inflection point indicated above
+n.clus <- 9
+
+SAclus <- kmeans(PCA$scores[, 1:n.pc], n.clus, iter.max = 100, nstart = 20)
+
+SAclusters <- SAclus$cluster
+
+# We need this for the 'ddply' function
+library(plyr)
+
+# Compute a data frame (one row per cluster) containing the means of each
+# variable in that cluster
+mean_by_cluster <- ddply(t0_cleaned, .(SAclusters), numcolwise(mean))[, -1]
+
+# Compute the column-wise means for *all* observations
+mean_by_col <- apply(t0_cleaned[, -1], 2, mean)
+
+# Compute the column-wise *sample* sd's for *all* observations
+sd_by_col <- apply(t0_cleaned[, -1], 2, sd)
+
+# Create the z-scores via the 'scale' function
+z_scores <- scale(mean_by_cluster, center = mean_by_col, scale = sd_by_col)
+```
+
+A named cluster has been assigned to each of the Small Areas, based on the K-Means clustering algorithm on the variables prepared during Step 1. These have then in turn been transformed to explain each cluster in terms of the original variables, rather than the principal components.
+
+The remaining step is to visualize the cluster breakdown.
+
+```{r cluster-viz}
+library(RColorBrewer)
+heatmap(t(z_scores),
+        scale = 'none',
+        col=brewer.pal(6,'BrBG'),
+        breaks=c(-1e10,-2,-1,0,1,2,+1e10),
+        xlab='Cluster Number',
+        cexRow =0.5)
+
+barplot(sort(table(SAclusters)), 
+        las = 3,
+        xlab = "Cluster",
+        ylab = "Small Area Count",
+        main = "Small Area Count by Cluster")
+```
+
+```{r output-table-creation, include=FALSE, eval=FALSE}
+z_scores %>% 
+  as_tibble() %>% 
+  rownames_to_column(var = "cluster") -> z_table
+
+SAclusters %>% 
+  as_tibble() %>%
+  select(cluster = value) %>%
+  mutate(cluster = as.character(cluster)) %>% 
+  add_column(guid = dublin_saps_2016$GUID,
+             total_pop = dublin_saps_2016$T1_1AGETT) %>% 
+  left_join(z_table) -> sa_by_cluster
+```
+
+
